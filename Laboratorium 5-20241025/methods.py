@@ -136,18 +136,14 @@ def black_pill_binarizer(image: np.ndarray, display: bool = False) -> np.ndarray
 
 def yellow_pills_binarizer(image: np.ndarray, display: bool = False) -> np.ndarray:
 
-    image_hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    image_value = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)[:, :, 2]
+    image_hue = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)[:, :, 0]
 
-    # blue organizer hue 90 - 110
+    lower_bound = 22
+    upper_bound = 30
 
-    # Extract the hue channel
-    hue_channel = image_hsv[..., 0]
-
-    # Define the hue range for binarization
-    lower_bound = 90
-    upper_bound = 110
-    # Create a binary mask for hue values between 90 and 110
-    hue_mask = cv2.inRange(hue_channel, lower_bound, upper_bound)
+    # Create a binary mask for hue values between 25 and 29
+    hue_mask = cv2.inRange(image_hue, lower_bound, upper_bound)
 
     if display:
         plt.figure(figsize=(12, 8))
@@ -156,164 +152,242 @@ def yellow_pills_binarizer(image: np.ndarray, display: bool = False) -> np.ndarr
         plt.colorbar()
         plt.show()
 
-    # Find contours
-    contours, _ = cv2.findContours(hue_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    kernel = np.ones((5, 5), np.uint8)
 
-    # filter contours by area
+    hue_mask = cv2.erode(hue_mask, kernel, iterations=2)
 
-    contours = [contour for contour in contours if cv2.contourArea(contour) > 1000]
-
-    if display:
-        contour_image = np.zeros_like(image)
-        cv2.drawContours(contour_image, contours, -1, (255, 255, 0), 3)
-
-    # Convex hull
-    convex_hulls = [cv2.convexHull(contour) for contour in contours]
-
-    if display:
-        contour_image = np.zeros_like(image)
-        cv2.drawContours(contour_image, convex_hulls, -1, (255, 255, 0), 3)
-
-    # all pixels outside the convex hull are set to 0
-    mask = np.zeros_like(image)
-    cv2.drawContours(mask, convex_hulls, -1, (255, 255, 255), -1)
-
-    image = cv2.bitwise_and(image, mask)
-
-    # print img color model
-
-    if display:
-        plt.figure(figsize=(12, 8))
-        plt.imshow(image[..., ::-1])
-        plt.title("Filtered Image")
-        plt.show()
-
-    image_lab = cv2.cvtColor(image, cv2.COLOR_BGR2Lab)
-
-    # Extract the 'b*' channel from the Lab image
-    b_channel = image_lab[..., 2]
-    if display:
-        plt.figure(figsize=(12, 8))
-        plt.imshow(b_channel, cmap="gray")
-        plt.title("B Channel")
-        plt.colorbar()
-        plt.show()
-
-    # apply thresholding 182
-    _, image_b = cv2.threshold(b_channel, 166, 255, cv2.THRESH_BINARY)
-
-    if display:
-        plt.figure(figsize=(12, 8))
-        plt.imshow(image_b, cmap="gray")
-        plt.title("Binarized B Channel")
-        plt.colorbar()
-        plt.show()
-    # image_combined = image_b
-    # Extract the hue channel
-
-    hue_channel = image_hsv[..., 0]
-
-    # Define the hue range for binarization
-    lower_bound = 25
-    upper_bound = 29
-
-    # Create a binary mask for hue values between 20 and 40
-    hue_mask = cv2.inRange(hue_channel, lower_bound, upper_bound)
+    hue_mask = cv2.dilate(hue_mask, kernel, iterations=1)
 
     if display:
         plt.figure(figsize=(12, 8))
         plt.imshow(hue_mask, cmap="gray")
-        plt.title("Hue Mask")
+        plt.title("Hue Mask closed")
         plt.colorbar()
         plt.show()
 
-    # # make a bitwise NAND of otsu_thresh and edges
-    image_combined = cv2.bitwise_or(image_b, hue_mask)
+    circles = cv2.HoughCircles(
+        hue_mask,
+        cv2.HOUGH_GRADIENT,
+        dp=1.5,
+        minDist=20,
+        param1=50,
+        param2=15,
+        minRadius=8,
+        maxRadius=30,
+    )
 
-    if display:
-        plt.figure(figsize=(12, 8))
-        plt.imshow(image_combined, cmap="gray")
-        plt.title("Combined Image")
-        plt.colorbar()
-        plt.show()
+    # If some circles are detected, draw them on the original image
+    if circles is not None:
+        circles = np.round(circles[0, :]).astype("int")
+        output = np.zeros_like(image)
+        for x, y, r in circles:
+            cv2.circle(output, (x, y), r, (0, 255, 0), 4)
 
-    # Apply erosion
-    erosion_kernel = np.ones((7, 7), np.uint8)
-    image_combined = cv2.erode(image_combined, erosion_kernel, iterations=1)
-    if display:
-        plt.figure(figsize=(12, 8))
-        plt.imshow(image_combined, cmap="gray")
-        plt.title("Eroded Image")
-        plt.colorbar()
-        plt.show()
+        # Display the output image with detected circles
+        if display:
+            plt.figure(figsize=(12, 8))
+            plt.imshow(cv2.cvtColor(output, cv2.COLOR_BGR2RGB))
+            plt.title("Detected Circles using Hough Circle Transform")
+            plt.axis("off")
+            plt.show()
+    else:
+        print("No circles were detected")
 
-    # Apply dilation
-    dilation_kernel = np.ones((7, 7), np.uint8)
-    image_combined = cv2.dilate(image_combined, dilation_kernel, iterations=1)
-    if display:
-        plt.figure(figsize=(12, 8))
-        plt.imshow(image_combined, cmap="gray")
-        plt.title("Dilated Image")
-        plt.colorbar()
-        plt.show()
+    # Transform circles to contours
+    contours = []
+    if circles is not None:
+        for x, y, r in circles:
+            # Create a circular contour
+            contour = np.array(
+                [
+                    [x + r * np.cos(theta), y + r * np.sin(theta)]
+                    for theta in np.linspace(0, 2 * np.pi, 100)
+                ],
+                dtype=np.int32,
+            )
+            contours.append(contour)
 
-    # edges
+    return contours
 
-    blur = cv2.GaussianBlur(image, (5, 5), 0)
-    edges = cv2.Canny(blur, 120, 190)
 
-    # perform CLOSE operation on edges
-    edges_kernel = np.ones((3, 3), np.uint8)
-    edges = cv2.dilate(edges, edges_kernel, iterations=1)
+# image_hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+# # blue organizer hue 90 - 110
 
-    edges = cv2.bitwise_not(edges)
+# # Extract the hue channel
+# hue_channel = image_hsv[..., 0]
 
-    if display:
-        plt.figure(figsize=(12, 8))
-        plt.imshow(edges, cmap="gray")
-        plt.title("Edges")
-        plt.colorbar()
-        plt.show()
+# # Define the hue range for binarization
+# lower_bound = 90
+# upper_bound = 110
+# # Create a binary mask for hue values between 90 and 110
+# hue_mask = cv2.inRange(hue_channel, lower_bound, upper_bound)
 
-    image = cv2.bitwise_and(image_combined, edges)
+# if display:
+#     plt.figure(figsize=(12, 8))
+#     plt.imshow(hue_mask, cmap="gray")
+#     plt.title("Hue Mask")
+#     plt.colorbar()
+#     plt.show()
 
-    if display:
-        plt.figure(figsize=(12, 8))
-        plt.imshow(image, cmap="gray")
-        plt.title("Final Image")
-        plt.colorbar()
-        plt.show()
+# # Find contours
+# contours, _ = cv2.findContours(hue_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    # Find contours
-    contours, _ = cv2.findContours(image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if display:
-        contour_image = np.zeros_like(image)
-        cv2.drawContours(contour_image, contours, -1, (255, 255, 0), 3)
-        plt.figure(figsize=(12, 8))
-        plt.imshow(cv2.cvtColor(contour_image, cv2.COLOR_BGR2RGB))
-        plt.title("Contours")
-        plt.colorbar()
-        plt.show()
+# # filter contours by area
 
-    # convex hull
-    convex_hulls = []
-    for contour in contours:
-        hull = cv2.convexHull(contour)
-        convex_hulls.append(hull)
+# contours = [contour for contour in contours if cv2.contourArea(contour) > 1000]
 
-    # filter contours by area
-    convex_hulls = [hull for hull in convex_hulls if cv2.contourArea(hull) > 300]
+# if display:
+#     contour_image = np.zeros_like(image)
+#     cv2.drawContours(contour_image, contours, -1, (255, 255, 0), 3)
 
-    if display:
-        contour_image = np.zeros_like(image)
-        cv2.drawContours(contour_image, convex_hulls, -1, (255, 255, 0), 3)
-        plt.figure(figsize=(12, 8))
-        plt.imshow(cv2.cvtColor(contour_image, cv2.COLOR_BGR2RGB))
-        plt.title("Convex Hulls")
-        plt.colorbar()
-        plt.show()
+# # Convex hull
+# convex_hulls = [cv2.convexHull(contour) for contour in contours]
 
-    return convex_hulls
+# if display:
+#     contour_image = np.zeros_like(image)
+#     cv2.drawContours(contour_image, convex_hulls, -1, (255, 255, 0), 3)
+
+# # all pixels outside the convex hull are set to 0
+# mask = np.zeros_like(image)
+# cv2.drawContours(mask, convex_hulls, -1, (255, 255, 255), -1)
+
+# image = cv2.bitwise_and(image, mask)
+
+# # print img color model
+
+# if display:
+#     plt.figure(figsize=(12, 8))
+#     plt.imshow(image[..., ::-1])
+#     plt.title("Filtered Image")
+#     plt.show()
+
+# image_lab = cv2.cvtColor(image, cv2.COLOR_BGR2Lab)
+
+# # Extract the 'b*' channel from the Lab image
+# b_channel = image_lab[..., 2]
+# if display:
+#     plt.figure(figsize=(12, 8))
+#     plt.imshow(b_channel, cmap="gray")
+#     plt.title("B Channel")
+#     plt.colorbar()
+#     plt.show()
+
+# # apply thresholding 182
+# threshold_value = 182
+# _, image_b = cv2.threshold(b_channel, threshold_value, 255, cv2.THRESH_BINARY)
+
+# if display:
+#     plt.figure(figsize=(12, 8))
+#     plt.imshow(image_b, cmap="gray")
+#     plt.title(f"Binarized B Channel {threshold_value}")
+#     plt.colorbar()
+#     plt.show()
+# # image_combined = image_b
+# # Extract the hue channel
+
+# hue_channel = image_hsv[..., 0]
+
+# # Define the hue range for binarization
+# lower_bound = 25
+# upper_bound = 29
+
+# # Create a binary mask for hue values between 20 and 40
+# hue_mask = cv2.inRange(hue_channel, lower_bound, upper_bound)
+
+# if display:
+#     plt.figure(figsize=(12, 8))
+#     plt.imshow(hue_mask, cmap="gray")
+#     plt.title("Hue Mask")
+#     plt.colorbar()
+#     plt.show()
+
+# # # make a bitwise NAND of otsu_thresh and edges
+# image_combined = cv2.bitwise_or(image_b, hue_mask)
+
+# if display:
+#     plt.figure(figsize=(12, 8))
+#     plt.imshow(image_combined, cmap="gray")
+#     plt.title("Combined Image")
+#     plt.colorbar()
+#     plt.show()
+
+# # Apply erosion
+# erosion_kernel = np.ones((7, 7), np.uint8)
+# image_combined = cv2.erode(image_combined, erosion_kernel, iterations=1)
+# if display:
+#     plt.figure(figsize=(12, 8))
+#     plt.imshow(image_combined, cmap="gray")
+#     plt.title("Eroded Image")
+#     plt.colorbar()
+#     plt.show()
+
+# # Apply dilation
+# dilation_kernel = np.ones((7, 7), np.uint8)
+# image_combined = cv2.dilate(image_combined, dilation_kernel, iterations=1)
+# if display:
+#     plt.figure(figsize=(12, 8))
+#     plt.imshow(image_combined, cmap="gray")
+#     plt.title("Dilated Image")
+#     plt.colorbar()
+#     plt.show()
+
+# # edges
+
+# blur = cv2.GaussianBlur(image, (5, 5), 0)
+# edges = cv2.Canny(blur, 120, 190)
+
+# # perform CLOSE operation on edges
+# edges_kernel = np.ones((3, 3), np.uint8)
+# edges = cv2.dilate(edges, edges_kernel, iterations=1)
+
+# edges = cv2.bitwise_not(edges)
+
+# if display:
+#     plt.figure(figsize=(12, 8))
+#     plt.imshow(edges, cmap="gray")
+#     plt.title("Edges")
+#     plt.colorbar()
+#     plt.show()
+
+# image = cv2.bitwise_and(image_combined, edges)
+
+# if display:
+#     plt.figure(figsize=(12, 8))
+#     plt.imshow(image, cmap="gray")
+#     plt.title("Final Image")
+#     plt.colorbar()
+#     plt.show()
+
+# # Find contours
+# contours, _ = cv2.findContours(image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+# if display:
+#     contour_image = np.zeros_like(image)
+#     cv2.drawContours(contour_image, contours, -1, (255, 255, 0), 3)
+#     plt.figure(figsize=(12, 8))
+#     plt.imshow(cv2.cvtColor(contour_image, cv2.COLOR_BGR2RGB))
+#     plt.title("Contours")
+#     plt.colorbar()
+#     plt.show()
+
+# # convex hull
+# convex_hulls = []
+# for contour in contours:
+#     hull = cv2.convexHull(contour)
+#     convex_hulls.append(hull)
+
+# # filter contours by area
+# convex_hulls = [hull for hull in convex_hulls if cv2.contourArea(hull) > 300]
+
+# if display:
+#     contour_image = np.zeros_like(image)
+#     cv2.drawContours(contour_image, convex_hulls, -1, (255, 255, 0), 3)
+#     plt.figure(figsize=(12, 8))
+#     plt.imshow(cv2.cvtColor(contour_image, cv2.COLOR_BGR2RGB))
+#     plt.title("Convex Hulls")
+#     plt.colorbar()
+#     plt.show()
+
+# return convex_hulls
 
 
 # BLUE PILLS
