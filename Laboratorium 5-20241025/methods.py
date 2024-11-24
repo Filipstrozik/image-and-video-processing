@@ -406,7 +406,7 @@ def blue_pills_binarizer(image: np.ndarray, display: bool = False) -> List[np.nd
     if display:
         plt.figure(figsize=(12, 8))
         plt.imshow(binary_mask_s, cmap="gray")
-        plt.title("Binary Mask for S Channel (0 to 30)")
+        plt.title("Binary Mask for S Channel (0 to 28)")
         plt.colorbar()
         plt.show()
 
@@ -551,7 +551,7 @@ def big_white_pills_binarize(image: np.ndarray, display: bool = False) -> np.nda
     if display:
         plt.figure(figsize=(12, 8))
         plt.imshow(combined_mask, cmap="gray")
-        plt.title("Combined Binary Mask h i v s")
+        plt.title("Combined Binary Mask h s v")
         plt.colorbar()
         plt.show()
 
@@ -654,7 +654,7 @@ def small_white_pills_binarize(image: np.ndarray, display: bool = False) -> np.n
 
     if display:
         plt.figure(figsize=(12, 8))
-        plt.imshow(image[..., ::-1])
+        plt.imshow(cv2.cvtColor(image, cv2.COLOR_HSV2RGB))
         plt.title("Filtered Image")
         plt.show()
 
@@ -819,7 +819,6 @@ def small_white_pills_binarize(image: np.ndarray, display: bool = False) -> np.n
             # Calculate the axis ratio
             axis_ratio = max(major_axis, minor_axis) / min(major_axis, minor_axis)
 
-            # Filter ellipses that are close to circular based on symmetry tolerance
             if axis_ratio < symmetry_tolerance:
                 ellipses.append(ellipse)
                 filtered_hulls.append(contour)
